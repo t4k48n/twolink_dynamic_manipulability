@@ -1,3 +1,25 @@
+(* #use "utils.ml" *)
+open Utils
+
+(* 値がほぼ等しい（差がしきい値未満）ことを確認する *)
+(* nearly_equal : ?threshold:float -> float -> float -> bool *)
+let nearly_equal ?(threshold=1E-6) x y = abs_float (x -. y) < threshold
+
+(* a in A, b in Bのリストから(a, b) in CとなるリストCを返す *)
+(* list_zip : 'a list -> 'b list -> ('a * 'b) list *)
+let list_zip la lb = List.map2 (fun x y -> (x, y)) la lb
+
+(* リスト全てに判定fを適用し、全て真ならば真を返す *)
+(* list_all : ('a -> bool) -> 'a list -> bool *)
+let list_all f lst = List.fold_left ( && ) true (List.map f lst)
+
+let nearly_equal_tests =
+  let t1 = nearly_equal 1.0 1.1 = false in
+  let t2 = nearly_equal 1.0 1.0001 = false in
+  let t3 = nearly_equal 1.0 1.00000001 = true in
+  let t4 = nearly_equal ~threshold:1.0 1.0 1.9 = true in
+  [t1; t2; t3; t4]
+
 (* 円周率 *)
 let pi = 4.0 *. atan 1.0
 
@@ -66,7 +88,17 @@ let manipulability q z =
   let j = jacobian q z in
   let jt = m22_transpose j in
   let jjt = m22_multiply j jt in
-  sqrt @@ m22_determinant jjt
+  let m = sqrt @@ m22_determinant jjt in
+  match compare m nan with
+    | 0 -> 0.0
+    | _ -> m
+
+let manipulability_tests =
+  let t1 = nearly_equal (manipulability (0.0, 0.0) v2_zero) 0.0 in
+  let t2 = nearly_equal (manipulability (pi, pi) v2_zero) 0.0 in
+  let t3 = nearly_equal (manipulability (pi, 0.0) v2_zero) 0.0 in
+  let t4 = nearly_equal (manipulability (0.0, pi) v2_zero) 0.0 in
+  [t1; t2; t3; t4]
 
 let inertia_matrix (q1, q2) (z1, z2) =
   let l1' = l1 +. dl1 *. z1 in
@@ -94,18 +126,100 @@ let dynamic_manipulability q z =
   let jt = m22_transpose j in
   let m = inertia_matrix q z in
   let mt = m22_transpose m in
-  sqrt @@ m22_determinant @@ m22_multiply j @@ m22_multiply (m22_inverse @@ m22_multiply mt m) jt
+  let result = sqrt @@ m22_determinant @@ m22_multiply j @@ m22_multiply (m22_inverse @@ m22_multiply mt m) jt in
+  match compare result nan with
+    | 0 -> 0.0
+    | _ -> result
+
+let dynamic_manipulability_tests =
+  let qs = List.init 10 (fun _ -> (random_uniform 0.0 (2. *. pi), random_uniform 0.0 (2. *. pi))) in
+  let zs = List.init 10 (fun _ -> (random_uniform (-1.0) 1.0, random_uniform (-1.0) 1.0)) in
+  (* 動的可操作性w_dと可操作性wのあいだには次の関係が成り立つことを確認する。
+   *    w_d = w / det(im)
+   * ここでimは慣性行列である *)
+  let t1 =
+    let f q z =
+      let wd = dynamic_manipulability q z in
+      let w = manipulability q z in
+      let im = inertia_matrix q z in
+      nearly_equal wd (w /. m22_determinant im)
+      in
+    List.fold_left ( && ) true (List.map2 f qs zs)
+    in
+  [t1]
+
+let sum = List.fold_left ( +. ) 0.0
+
+let list_mean data =
+  assert (data <> []);
+  let len = List.length data in
+  sum data /. float len
+
+let list_mean_tests =
+  let t1 = list_mean [1.; 2.; 3.] = 2. in
+  let t2 = list_mean [0.] = 0. in
+  [t1; t2]
+
+let list_variance data =
+  let m = list_mean data in
+  let len = List.length data in
+  sum (List.map (fun d -> (m -. d) **2.) data) /. float len
+
+let list_variance_tests =
+  let t1 = list_variance [1.; 2.; 3.] = 2. /. 3. in
+  let t2 = list_variance [0.] = 0. in
+  let t3 = list_variance [1.; 1.; 1.] = 0. in
+  [t1; t2; t3]
+
+let list_stddev data =
+  sqrt (list_variance data)
+
+let list_stddev_tests =
+  let t1 = list_stddev [1.; 2.; 3.] = sqrt (2. /. 3.) in
+  let t2 = list_stddev [0.] = 0. in
+  let t3 = list_stddev [1.; 1.; 1.] = 0. in
+  [t1; t2; t3]
+
+let list_range a b =
+  let rec loop acc b = if b < a then acc else loop (b :: acc) (b - 1) in
+  loop [] (b - 1)
+
+let list_range_tests =
+  let t1 = list_range 0 5 = [0; 1; 2; 3; 4] in
+  let t2 = list_range 3 5 = [3; 4] in
+  let t3 = list_range 3 0 = [] in
+  [t1; t2; t3]
+
+(* 計算結果がnanになるのを避けるための値 *)
+let epsilon = 1E-10
+
+let q_ticks = List.map (fun r -> float r *. 2. *. pi /. 32. +. epsilon) (list_range 0 32)
+
+let z_ticks = List.map (fun r -> float r *. 2. /. 32. -. 1. +. epsilon) (list_range 0 32)
+
+let q_list =
+  List.map (fun q1 -> List.map (fun q2 -> (q1, q2)) q_ticks) q_ticks |> List.concat
+
+let z_list =
+  List.map (fun z1 -> List.map (fun z2 -> (z1, z2)) z_ticks) z_ticks |> List.concat
+
+let dm_mean_stddev_list =
+  let f q =
+    let dm_list = List.map (fun z -> dynamic_manipulability q z) z_list in
+    (list_mean dm_list, list_stddev dm_list) in
+  List.map (fun q -> f q) q_list
 
 let () =
-  let q = (1., 2.) in
-  let num = 1000 in
-  Random.init 42;
-  let zs = List.init num (fun _ -> (random_uniform (-1.0) 1.0, random_uniform (-1.0) 1.0)) in
-  let dms = List.map (fun z -> dynamic_manipulability q z) zs in
-  let sum = List.fold_left (fun acc x -> acc +. x) 0.0 in
-  let mean = sum dms /. float num in
-  let variance = sum (List.map (fun dm -> (mean -. dm) ** 2.0) dms) /. float num in
-  let stddev = sqrt variance in
-  Printf.printf "Mean     : %17.15f\n" mean;
-  Printf.printf "Var      : %17.15f\n" variance;
-  Printf.printf "Std. Dev.: %17.15f\n" stddev
+  Printf.printf "q1,q2,mean,stddev,stddev/mean\n";
+  let f (q1, q2) (mean, stddev) =
+    Printf.printf "%17.15f,%17.15f,%17.15f,%17.15f,%17.15f\n" q1 q2 mean stddev (stddev /. mean) in
+  List.iter2 f q_list dm_mean_stddev_list
+
+let run_tests () =
+  println_tests "dynamic_manipulability_tests" dynamic_manipulability_tests;
+  println_tests "nearly_equal_tests" nearly_equal_tests;
+  println_tests "manipulability_tests" manipulability_tests;
+  println_tests "list_mean_tests" list_mean_tests;
+  println_tests "list_variance_tests" list_variance_tests;
+  println_tests "list_stddev_tests" list_stddev_tests;
+  println_tests "list_range_tests" list_range_tests
