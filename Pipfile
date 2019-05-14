@@ -9,6 +9,8 @@ verify_ssl = true
 numpy = "*"
 matplotlib = "*"
 pyqt5 = "*"
+ipython = "*"
+sympy = "*"
 
 [requires]
 python_version = "3.6"

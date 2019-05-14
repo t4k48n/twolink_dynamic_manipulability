@@ -33,6 +33,10 @@ let dl2 = 0.02
 let rho1 = 1.0
 let rho2 = 1.0
 
+(* 把持質点の質量の不確かさの比率。dm = 0.1で質点が1 kgならば、質点の実際の質量
+ * は[0.9, 1.1]に分布する *)
+let dm = 0.1
+
 (* 2次元ベクトル *)
 type v2_t = float * float
 
@@ -100,26 +104,23 @@ let manipulability_tests =
   let t4 = nearly_equal (manipulability (0.0, pi) v2_zero) 0.0 in
   [t1; t2; t3; t4]
 
-let inertia_matrix (q1, q2) (z1, z2) =
+(* 質量mの質点を把持したときの慣性行列 *)
+let inertia_matrix_with_grasp (q1, q2) (z1, z2, z3) m =
   let l1' = l1 +. dl1 *. z1 in
   let l2' = l2 +. dl2 *. z2 in
   let m1' = l1' *. rho1 in
   let m2' = l2' *. rho2 in
+  let m3' = m +. m *. dm *. z3 in
   let inert1 = 1.0 /. 12.0 *. m1' *. l1' ** 2.0 in
   let inert2 = 1.0 /. 12.0 *. m2' *. l2' ** 2.0 in
-  let m11 = m1' *. l1' ** 2.0 /. 4.0
-            +. m1' *. l1' ** 2.0
-            +. m2' *. l2' ** 2.0 /. 4.0
-            +. inert1
-            +. inert2
-            +. 2.0 *. m2' *. l1' *. l2' /. 2.0 *. cos (q2) in
-  let m12 = m2' *. l2' ** 2.0 /. 4.0
-            +. inert2
-            +. m2' *. l1' *. l2' /. 2.0 *. cos (q2) in
-  let m21 = m12 in
-  let m22 = m2' *. l2' ** 2.0 /. 4.0
-            +. inert2 in
+  let m11 = inert1 +. inert2 +. l1' ** 2.0 *. m1' /. 4.0 +. l1' ** 2.0 *. m2' +. l1' ** 2.0 *. m3' +. l1' *. l2' *. m2' *. cos(q2) +. 2.0 *. l1' *. l2' *. m3' *. cos(q2) +. l2' ** 2.0 *. m2' /. 4.0 +. l2' ** 2.0 *. m3' in
+  let m12 = inert2 +. l1' *. l2' *. m2' *. cos(q2) /. 2.0 +. l1' *. l2' *. m3' *. cos(q2) +. l2' ** 2.0 *. m2' /. 4.0 +. l2' ** 2.0 *. m3' in
+  let m21 = inert2 +. l1' *. l2' *. m2' *. cos(q2) /. 2.0 +. l1' *. l2' *. m3' *. cos(q2) +. l2' ** 2.0 *. m2' /. 4.0 +. l2' ** 2.0 *. m3' in
+  let m22 = inert2 +. l2' ** 2.0 *. m2' /. 4.0 +. l2' ** 2.0 *. m3' in
   (m11, m12, m21, m22)
+
+(* 慣性行列 *)
+let inertia_matrix q (z1, z2) = inertia_matrix_with_grasp q (z1, z2, 0.0) 0.0
 
 let dynamic_manipulability q z =
   let j = jacobian q z in
@@ -203,17 +204,17 @@ let q_list =
 let z_list =
   List.map (fun z1 -> List.map (fun z2 -> (z1, z2)) z_ticks) z_ticks |> List.concat
 
-let dm_mean_stddev_list =
+let dynm_mean_stddev_list =
   let f q =
-    let dm_list = List.map (fun z -> dynamic_manipulability q z) z_list in
-    (list_mean dm_list, list_stddev dm_list) in
+    let dynm_list = List.map (fun z -> dynamic_manipulability q z) z_list in
+    (list_mean dynm_list, list_stddev dynm_list) in
   List.map (fun q -> f q) q_list
 
 let () =
   Printf.printf "q1,q2,mean,stddev,stddev/mean\n";
   let f (q1, q2) (mean, stddev) =
     Printf.printf "%17.15f,%17.15f,%17.15f,%17.15f,%17.15f\n" q1 q2 mean stddev (stddev /. mean) in
-  List.iter2 f q_list dm_mean_stddev_list
+  List.iter2 f q_list dynm_mean_stddev_list
 
 let run_tests () =
   println_tests "dynamic_manipulability_tests" dynamic_manipulability_tests;
