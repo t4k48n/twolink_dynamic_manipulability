@@ -93,12 +93,17 @@ let inertia_matrix_with_grasp (q1, q2) (z1, z2, z3) m =
 (* 慣性行列 *)
 let inertia_matrix q (z1, z2) = inertia_matrix_with_grasp q (z1, z2, 0.0) 0.0
 
-let dynamic_manipulability q z =
-  let j = jacobian q z in
+(* 質量mの質点を把持したときの動的可操作性 *)
+let dynamic_manipulability_with_grasp q (z1, z2, z3 as z) m =
+  let j = jacobian q (z1, z2) in
   let jt = m22_transpose j in
-  let m = inertia_matrix q z in
-  let mt = m22_transpose m in
-  let result = sqrt @@ m22_determinant @@ m22_multiply j @@ m22_multiply (m22_inverse @@ m22_multiply mt m) jt in
+  let im = inertia_matrix_with_grasp q z m in
+  let imt = m22_transpose im in
+  let result = sqrt @@ m22_determinant @@ m22_multiply j @@ m22_multiply (m22_inverse @@ m22_multiply imt im) jt in
   match compare result nan with
     | 0 -> 0.0
     | _ -> result
+
+(* 動的可操作性 *)
+let dynamic_manipulability q (z1, z2) =
+  dynamic_manipulability_with_grasp q (z1, z2, 0.0) 0.0
